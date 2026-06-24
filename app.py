@@ -13,53 +13,29 @@ API_URL = "https://5x2e5i0cgj.execute-api.us-east-1.amazonaws.com/analyze"
 # Set up page with a dark-mode first configuration layout
 st.set_page_config(page_title="AI Resume Engine Pro", layout="wide", initial_sidebar_state="collapsed")
 
-# Inject Custom CSS Injector for a sleek modern Dark SaaS Theme UI
+# # Inject Custom CSS Injector for a sleek modern Dark SaaS Theme UI
 st.markdown("""
     <style>
-    /* Main body background customization */
-    .stApp {
-        background-color: #0d1117;
-        color: #c9d1d9;
-    }
-    /* Title text styling with custom linear gradient color */
-    h1 {
+    /* Floating subtle watermark footer */
+    .watermark {
+        position: fixed;
+        bottom: 15px;
+        right: 15px;
         font-family: 'Inter', sans-serif;
-        font-weight: 800;
-        background: linear-gradient(45deg, #ff7b00, #ffae00);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 25px !important;
-    }
-    h2, h3 {
-        color: #f0f6fc !important;
-        font-family: 'Inter', sans-serif;
-        font-weight: 600;
-    }
-    /* Custom container glassmorphism metrics style cards block */
-    .metric-card {
-        background-color: #161b22;
+        font-size: 12px;
+        font-weight: 500;
+        color: #8b949e;
+        background-color: rgba(22, 27, 34, 0.8);
+        padding: 6px 12px;
+        border-radius: 6px;
         border: 1px solid #30363d;
-        border-radius: 12px;
-        padding: 24px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 999999;
+        pointer-events: none;
+        letter-spacing: 0.5px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     }
-    .score-text {
-        font-size: 48px;
-        font-weight: 800;
-        color: #ffaa00;
-        margin-bottom: 5px;
-    }
-    /* Modern sleek custom styled form buttons layout customization */
-    .stButton>button {
-        background: linear-gradient(135deg, #ff7b00 0%, #e66e00 100%) !important;
-        color: white !important;
-        border: none !outset !important;
-        font-weight: 600 !important;
-        padding: 12px 30px !important;
-        border-radius: 8px !important;
-        transition: all 0.3s ease !important;
-        box-shadow: 0 4px 15px rgba(255, 123, 0, 0.2) !important;
+}
+                                  !important;
         width: 100%;
     }
     .stButton>button:hover {
@@ -80,7 +56,8 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
-
+# Render the floating watermark on screen
+st.markdown('<div class="watermark">🚀 Built by Pranjal Sharma</div>', unsafe_allow_html=True)
 # Persistent Session Memory initialization
 if 'step' not in st.session_state: st.session_state.step = 1
 if 'resume_text' not in st.session_state: st.session_state.resume_text = ""
