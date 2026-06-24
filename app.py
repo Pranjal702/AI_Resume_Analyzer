@@ -20,7 +20,7 @@ st.markdown("""
     .watermark {
         position: fixed;
         bottom: 15px;
-        right: 15px;
+        left: 15px;
         font-family: 'Inter', sans-serif;
         font-size: 12px;
         font-weight: 500;
