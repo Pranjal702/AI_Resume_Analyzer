@@ -7,8 +7,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-# Consolidated deployment URL
-API_URL = "https://amazonaws.com"
+# Consolidated deployment URL (API Gateway invoke URL)
+API_URL = "https://5x2e5i0cgj.execute-api.us-east-1.amazonaws.com"
+
+REQUEST_TIMEOUT = 60  # seconds - Gemini calls can take a while
 
 st.set_page_config(page_title="AI Resume Engine Pro", layout="wide", initial_sidebar_state="collapsed")
 
@@ -23,7 +25,7 @@ st.markdown("""
     .stButton>button { background: linear-gradient(135deg, #ff7b00 0%, #e66e00 100%) !important; color: white !important; border: none !important; font-weight: 600 !important; padding: 12px 30px !important; border-radius: 8px !important; transition: all 0.3s ease !important; width: 100%; }
     .stButton>button:hover { transform: translateY(-2px) !important; box-shadow: 0 6px 20px rgba(255, 123, 0, 0.4) !important; }
     textarea { background-color: #161b22 !important; color: #ffffff !important; border: 1px solid #30363d !important; border-radius: 8px !important; }
-    
+
     /* Watermark - Anchored securely to the Bottom-Left */
     .watermark {
         position: fixed; bottom: 15px; left: 15px; font-family: 'Inter', sans-serif; font-size: 12px;
@@ -42,6 +44,37 @@ if 'resume_text' not in st.session_state: st.session_state.resume_text = ""
 if 'analysis' not in st.session_state: st.session_state.analysis = None
 if 'merged_text' not in st.session_state: st.session_state.merged_text = ""
 if 'checked_improvements' not in st.session_state: st.session_state.checked_improvements = {}
+
+
+def call_backend(payload):
+    """
+    Calls the backend API and returns parsed JSON.
+    Raises a RuntimeError with a clear, human-readable message on any failure
+    (network error, timeout, non-2xx status, or invalid JSON body) instead of
+    letting a raw json.JSONDecodeError bubble up.
+    """
+    try:
+        response = requests.post(API_URL, json=payload, timeout=REQUEST_TIMEOUT)
+    except requests.exceptions.Timeout:
+        raise RuntimeError("The backend took too long to respond (timeout). Please try again.")
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError("Could not connect to the backend API. Check that the API Gateway URL is correct and the Lambda is deployed.")
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Network error while calling backend: {e}")
+
+    if response.status_code >= 400:
+        # Try to surface any error detail the backend sent back
+        detail = response.text[:300] if response.text else "(empty response body)"
+        raise RuntimeError(f"Backend returned HTTP {response.status_code}: {detail}")
+
+    if not response.text:
+        raise RuntimeError("Backend returned an empty response body. Check CloudWatch logs for the Lambda function.")
+
+    try:
+        return response.json()
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Backend did not return valid JSON. Raw response: {response.text[:300]}")
+
 
 def generate_pdf(text_content):
     pdf_buffer = io.BytesIO()
@@ -65,7 +98,7 @@ if st.session_state.step == 1:
     st.title("✨ AI Resume Analyzer & Match Optimization Engine")
     st.write("Optimize your application for Applicant Tracking Systems (ATS) instantly using serverless AI analytics.")
     st.markdown("<br>", unsafe_allow_html=True)
-    
+
     col_a, col_b = st.columns(2)
     with col_a:
         st.subheader("📂 Upload Current Resume")
@@ -73,29 +106,46 @@ if st.session_state.step == 1:
     with col_b:
         st.subheader("🎯 Target Job Description")
         job_desc = st.text_area("Paste role details and required engineering skills here", height=180, label_visibility="collapsed", placeholder="Paste job description keywords here...")
-    
+
     st.markdown("<br>", unsafe_allow_html=True)
-    
+
     if st.button("Analyze Match Parameters & Evaluate Scores 🚀"):
         if uploaded_file and job_desc:
             with st.spinner("Extracting contents and evaluation scores via AWS Gateway..."):
                 text = ""
-                if uploaded_file.type == "application/pdf":
-                    reader = pypdf.PdfReader(uploaded_file)
-                    for page in reader.pages: text += page.extract_text() + "\n"
-                else:
-                    text = uploaded_file.read().decode("utf-8")
-                
-                st.session_state.resume_text = text
-                
                 try:
-                    response = requests.post(API_URL, json={"action": "analyze", "resume_text": text, "job_description": job_desc})
-                    st.session_state.analysis = response.json()
-                    st.session_state.checked_improvements = {i: False for i in range(len(st.session_state.analysis.get('improvements', [])))}
-                    st.session_state.step = 2
-                    st.经济_rerun = st.rerun()
+                    if uploaded_file.type == "application/pdf":
+                        reader = pypdf.PdfReader(uploaded_file)
+                        for page in reader.pages:
+                            extracted = page.extract_text()
+                            if extracted:
+                                text += extracted + "\n"
+                    else:
+                        text = uploaded_file.read().decode("utf-8")
                 except Exception as e:
-                    st.error(f"Backend API Communication Error: {str(e)}")
+                    st.error(f"Failed to read the uploaded file: {e}")
+                    st.stop()
+
+                if not text.strip():
+                    st.error("No readable text could be extracted from this file. Try a different PDF or a .txt file.")
+                    st.stop()
+
+                st.session_state.resume_text = text
+
+                try:
+                    analysis = call_backend({
+                        "action": "analyze",
+                        "resume_text": text,
+                        "job_description": job_desc
+                    })
+                    st.session_state.analysis = analysis
+                    st.session_state.checked_improvements = {
+                        i: False for i in range(len(analysis.get('improvements', [])))
+                    }
+                    st.session_state.step = 2
+                    st.rerun()
+                except RuntimeError as e:
+                    st.error(f"Backend API Communication Error: {e}")
         else:
             st.warning("Please upload a file and fill out the job description before continuing.")
 
@@ -104,8 +154,8 @@ if st.session_state.step == 1:
 # ==========================================
 elif st.session_state.step == 2:
     st.title("📊 ATS Evaluation Scorecard & Optimization Deck")
-    data = st.session_state.analysis
-    
+    data = st.session_state.analysis or {}
+
     col1, col2 = st.columns([1, 1.2], gap="large")
     with col1:
         st.markdown(f"""
@@ -115,41 +165,60 @@ elif st.session_state.step == 2:
                 <p style="margin: 0; color: #c9d1d9; line-height: 1.5;">{data.get('summary', '')}</p>
             </div>
         """, unsafe_allow_html=True)
-        
+
         st.subheader("💡 Identified Strengths")
-        for s in data.get('strengths', []): st.markdown(f"⚡ &nbsp; {s}")
+        for s in data.get('strengths', []):
+            st.markdown(f"⚡ &nbsp; {s}")
         st.markdown("<br>", unsafe_allow_html=True)
         st.subheader("⚠️ Missing Core Competencies")
-        for m in data.get('missing_skills', []): st.markdown(f"<span style='color:#ff7b00;'>✕</span> &nbsp; {m}", unsafe_allow_html=True)
+        for m in data.get('missing_skills', []):
+            st.markdown(f"<span style='color:#ff7b00;'>✕</span> &nbsp; {m}", unsafe_allow_html=True)
 
     # Use st.fragment callback logic wrapper to isolate checkbox operations from total app refreshes
     @st.fragment
     def render_improvement_matrix():
         st.subheader("🎯 Premium Actionable Recommendations")
         st.write("Select the specific changes you want to merge seamlessly into your original document layout structure:")
-        
+
         for idx, imp in enumerate(data.get('improvements', [])):
             with st.expander(f"📌 Section Correction Context: {imp.get('context', 'Experience Updates')}"):
                 st.markdown(f"<span style='color:#8b949e;'>Current segment text:</span><code style='background-color:#21262d; padding:4px 8px; border-radius:4px; display:block; margin:5px 0;'>{imp.get('original','')}</code>", unsafe_allow_html=True)
                 st.markdown(f"<span style='color:#ff7b00; font-weight:600;'>Suggested update variant:</span><br><strong style='color:#ffffff;'>{imp.get('suggested','')}</strong>", unsafe_allow_html=True)
                 st.caption(f"Strategy reasoning: {imp.get('reason','')}")
-                
+
                 # Persist state variable selection instantly into memory without triggering a full layout rebuild
-                st.session_state.checked_improvements[idx] = st.checkbox("Merge optimization", key=f"patch_{idx}", value=st.session_state.checked_improvements.get(idx, False))
+                st.session_state.checked_improvements[idx] = st.checkbox(
+                    "Merge optimization",
+                    key=f"patch_{idx}",
+                    value=st.session_state.checked_improvements.get(idx, False)
+                )
 
         st.write("---")
         if st.button("Auto-Merge Selected Corrections & Edit Draft ⚡"):
-            improvements_to_send = [imp for idx, imp in enumerate(data.get('improvements', [])) if st.session_state.checked_improvements.get(idx)]
+            improvements_to_send = [
+                imp for idx, imp in enumerate(data.get('improvements', []))
+                if st.session_state.checked_improvements.get(idx)
+            ]
             with st.spinner("Processing structural adjustments dynamically..."):
                 try:
-                    res = requests.post(API_URL, json={"action": "merge", "resume_text": st.session_state.resume_text, "improvements": improvements_to_send})
-                    st.session_state.merged_text = res.json().get('updated_resume', '')
+                    result = call_backend({
+                        "action": "merge",
+                        "resume_text": st.session_state.resume_text,
+                        "improvements": improvements_to_send
+                    })
+                    st.session_state.merged_text = result.get('updated_resume', '')
                     st.session_state.step = 3
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Merging failed: {str(e)}")
+                except RuntimeError as e:
+                    st.error(f"Merging failed: {e}")
 
     render_improvement_matrix()
+
+    st.write("---")
+    if st.button("⬅️ Start Over"):
+        st.session_state.clear()
+        st.session_state.step = 1
+        st.rerun()
 
 # ==========================================
 # SCREEN 3: WORKSPACE STUDIO
@@ -157,14 +226,19 @@ elif st.session_state.step == 2:
 elif st.session_state.step == 3:
     st.title("🪟 Interactive Tailoring Workspace Studio")
     st.write("Your accepted changes have been merged. Review, add technical configurations, or remove formatting lines within the production workspace block below.")
-    
+
     # Store work area text data securely
     final_text = st.text_area("Live Document Workspace", value=st.session_state.merged_text, height=480, label_visibility="collapsed")
-    
+
     col_x, col_y = st.columns(2)
     with col_x:
         # Generate the PDF binary array directly from the live edited state variable window frame contents
-        st.download_button(label="📥 Download Tailored Resume (PDF)", data=generate_pdf(final_text), file_name="tailored_optimized_resume.pdf", mime="application/pdf")
+        st.download_button(
+            label="📥 Download Tailored Resume (PDF)",
+            data=generate_pdf(final_text),
+            file_name="tailored_optimized_resume.pdf",
+            mime="application/pdf"
+        )
     with col_y:
         if st.button("🔄 Reset Environment and Start Fresh"):
             st.session_state.clear()
