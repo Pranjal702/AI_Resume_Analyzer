@@ -8,7 +8,14 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # Consolidated deployment URL (API Gateway invoke URL)
-API_URL = "https://5x2e5i0cgj.execute-api.us-east-1.amazonaws.com"
+# NOTE: This is an HTTP API with a $default stage. The base Invoke URL alone
+# is NOT enough - the route path ("/analyze") must be appended.
+# If "merge" is handled by the SAME /analyze route (routed internally via the
+# "action" field in the JSON body), leave this as-is. If merge has its own
+# route (e.g. POST /merge), change MERGE_URL below to match.
+API_BASE_URL = "https://5x2e5i0cgj.execute-api.us-east-1.amazonaws.com"
+ANALYZE_URL = f"{API_BASE_URL}/analyze"
+MERGE_URL = f"{API_BASE_URL}/analyze"  # <-- update this if "merge" has its own route
 
 REQUEST_TIMEOUT = 60  # seconds - Gemini calls can take a while
 
@@ -46,7 +53,7 @@ if 'merged_text' not in st.session_state: st.session_state.merged_text = ""
 if 'checked_improvements' not in st.session_state: st.session_state.checked_improvements = {}
 
 
-def call_backend(payload):
+def call_backend(url, payload):
     """
     Calls the backend API and returns parsed JSON.
     Raises a RuntimeError with a clear, human-readable message on any failure
@@ -54,7 +61,7 @@ def call_backend(payload):
     letting a raw json.JSONDecodeError bubble up.
     """
     try:
-        response = requests.post(API_URL, json=payload, timeout=REQUEST_TIMEOUT)
+        response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
     except requests.exceptions.Timeout:
         raise RuntimeError("The backend took too long to respond (timeout). Please try again.")
     except requests.exceptions.ConnectionError:
@@ -133,7 +140,7 @@ if st.session_state.step == 1:
                 st.session_state.resume_text = text
 
                 try:
-                    analysis = call_backend({
+                    analysis = call_backend(ANALYZE_URL, {
                         "action": "analyze",
                         "resume_text": text,
                         "job_description": job_desc
@@ -201,7 +208,7 @@ elif st.session_state.step == 2:
             ]
             with st.spinner("Processing structural adjustments dynamically..."):
                 try:
-                    result = call_backend({
+                    result = call_backend(MERGE_URL, {
                         "action": "merge",
                         "resume_text": st.session_state.resume_text,
                         "improvements": improvements_to_send
